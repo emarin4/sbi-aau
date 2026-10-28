@@ -13,16 +13,17 @@ import sims_funcs_refined as sfr
 import Nbody_streams.nbody_streams as nbody
 import agama
 agama.setUnits(mass=1, length=1, velocity=1)
+from scipy.stats import rv_histogram
 
 
 ###################################
 ##Define input/output directories##
 ###################################
-RUN_TAG = "pert_825_9d_2mil_nocorr"
+RUN_TAG = "pert_sequential_aau"
 
 
 perturber_dir = os.path.join("/expanse/lustre/projects/upa160/lmarin/aau_sbi_project/run_sims/perturbers", RUN_TAG)
-output_dir = os.path.join("/expanse/lustre/projects/upa160/lmarin/aau_sbi_project/run_sims/sims", "sims_"+ RUN_TAG +"_s5foot_500part_seed79")
+output_dir = os.path.join("/expanse/lustre/projects/upa160/lmarin/aau_sbi_project/run_sims/sims", "sims_"+ RUN_TAG +"_seedchange_200part_ws5foot")
 os.makedirs(output_dir, exist_ok=True)
 
 ########################
@@ -50,13 +51,20 @@ potTotal = agama.Potential(potMW, potLMCm, potacc)
 ##Load unpert stream and stripping times##
 ##########################################
 
-unpert_stream_path = os.path.join(BASE_PATH, "stream_unperturbed_104.pkl")
+unpert_stream_path = os.path.join(BASE_PATH, "stream_unperturbed_810.pkl")
 with open(unpert_stream_path, "rb") as f:
     streamdata = pickle.load(f)
 meta = streamdata["metadata"]
 
-distrib_stripping = np.load(os.path.join(BASE_PATH, "distrib_stripping_104.npy"))
-#gauss_stripping = np.load(BASE_PATH + "gauss_stripping_622.npy")
+#Num. stripping times = Num of particles
+distrib_stripping_exact = np.load(os.path.join(BASE_PATH, "distrib_stripping_107.npy"))
+#Stripping time distribution to be sampled
+distrib_stripping_pool = np.load(os.path.join(BASE_PATH, "distrib_stripping_1016.npy"))
+
+# Fit a continuous distribution to the stripping time pool once
+_hist, _bin_edges = np.histogram(distrib_stripping_pool, bins=500, density=True)
+stripping_rv = rv_histogram((_hist, _bin_edges))
+
 
 #####################
 ##Load S5 footprint##
@@ -69,6 +77,9 @@ FIELD_RADIUS = _fp["field_radius_deg"].values
 
 def simulate_stream_from_pert(pert_dict, meta, distrib_stripping):
     "Run the particle-spray sim for a single perturber, and transform to AAU stream coords"
+
+    N_strip = meta["num_particles"] // 2 + 1
+    distrib_stripping = np.sort(stripping_rv.rvs(size=N_strip))
     
     stream_perturb = nbody.fast_sims.create_particle_spray_stream(
         pot_host=potTotal,
@@ -80,11 +91,11 @@ def simulate_stream_from_pert(pert_dict, meta, distrib_stripping):
         time_end=0.0,
         time_total=meta["Age_stream_Gyr"],
         save_rate=1,
-        time_stripping=distrib_stripping,
+        time_stripping=distrib_stripping, #or use distrib_stripping_exact
         add_perturber=pert_dict,
         verbose=False,
         dissolve_progenitor = True,
-        seed = 79,#None,
+        seed = None,
     )
   
     part_xv = stream_perturb["part_xv"]
@@ -97,7 +108,10 @@ def simulate_stream_from_pert(pert_dict, meta, distrib_stripping):
     in_footprint = (np.sqrt(dphi1**2 + dphi2**2) <= FIELD_RADIUS).any(axis=1)
     #print(f"  {in_footprint.sum()} / {len(in_footprint)} particles in footprint ({100*in_footprint.mean():.1f}%)")
 
+    #No S5 footprint
+    #feats = np.column_stack([coords[name] for name in sfr.NODE_FEATURE_NAMES])
 
+    #Using S5 footprint
     feats = np.column_stack([coords[name][in_footprint] for name in sfr.NODE_FEATURE_NAMES])
 
     return feats
@@ -126,7 +140,7 @@ def main():
         pert_inputs = pert_ele["inputs"]
         pert_dict = pert_ele["perturber"]
 
-        feats = simulate_stream_from_pert(pert_dict, meta, distrib_stripping)
+        feats = simulate_stream_from_pert(pert_dict, meta, stripping_rv)
         feats_list.append(feats)
 
         theta_rows.append([pert_inputs[name] for name in PARAM_NAMES])

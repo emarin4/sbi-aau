@@ -20,4 +20,4 @@ cd /expanse/lustre/projects/upa160/lmarin/aau_sbi_project/run_sims/perturbers
 # make sure the logs folder exists before SLURM tries to write into it
 mkdir -p logs
 
-python perturber_dicts_inputs.py
+python perturber_dicts_inputs_sequential.py
